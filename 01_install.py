@@ -76,10 +76,26 @@ def install_packages(venv_python):
     """가상환경에 패키지 설치 (실제 존재하는 버전 사용)"""
     print("\n패키지 설치 중...")
     
-    # 1. PyTorch 2.5.1 설치 (chatterbox-tts 호환)
+    # 1. PyTorch 2.5.1 설치 (OS별 최적화)
     print("1. PyTorch 2.5.1 설치 중...")
-    if not run_command(f"{venv_python} -m pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121", "PyTorch 설치"):
-        return False
+    
+    # OS별 PyTorch 설치 명령어 결정
+    system = platform.system()
+    if system == "Darwin":  # macOS
+        print("   macOS 감지: MPS 지원 PyTorch 설치 (Apple Silicon GPU 가속)")
+        pytorch_cmd = f"{venv_python} -m pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1"
+    elif system == "Windows":  # Windows
+        print("   Windows 감지: CUDA 버전 PyTorch 설치")
+        pytorch_cmd = f"{venv_python} -m pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121"
+    else:  # Linux
+        print("   Linux 감지: CUDA 버전 PyTorch 설치")
+        pytorch_cmd = f"{venv_python} -m pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121"
+    
+    if not run_command(pytorch_cmd, "PyTorch 설치"):
+        print("   CUDA 버전 실패, CPU 버전으로 재시도...")
+        pytorch_cmd_cpu = f"{venv_python} -m pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1"
+        if not run_command(pytorch_cmd_cpu, "PyTorch CPU 버전 설치"):
+            return False
     
     # 2. numpy 1.25.2 설치 (chatterbox-tts 호환)
     print("2. numpy 1.25.2 설치 중...")
@@ -160,6 +176,16 @@ def main():
     print("=" * 60)
     print("Chatterbox TTS PC용 설치 스크립트 (가상환경 사용)")
     print("=" * 60)
+    
+    # OS 정보 출력
+    system = platform.system()
+    print(f"운영체제: {system}")
+    if system == "Darwin":
+        print("✅ macOS 지원: MPS(Metal Performance Shaders) GPU 가속 사용")
+    elif system == "Windows":
+        print("✅ Windows 지원: CUDA 버전 PyTorch 사용")
+    else:
+        print("✅ Linux 지원: CUDA 버전 PyTorch 사용")
     
     # Python 버전 확인 (필수)
     if not check_python_version():

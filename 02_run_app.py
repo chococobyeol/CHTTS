@@ -7,6 +7,13 @@ import sys
 import os
 import platform
 
+# macOS에서 CUDA 오류 방지를 위한 환경 변수 설정
+if platform.system() == "Darwin":  # macOS
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    # PyTorch가 CUDA를 찾지 못하도록 추가 설정
+    os.environ["TORCH_USE_CUDA_DSA"] = "0"
+    print("macOS 감지: CUDA 환경 변수 비활성화")
+
 # 가상환경 경로 추가 (Colab과 동일한 방식)
 if platform.system() == "Windows":
     venv_path = os.path.join("chatterbox_env", "Lib", "site-packages")
@@ -24,11 +31,28 @@ import torchaudio as ta
 import gradio as gr
 import numpy as np
 import tempfile
+
+# macOS에서 CUDA 체크를 우회하기 위한 패치
+if platform.system() == "Darwin":
+    # torch.cuda.is_available()을 항상 False로 반환하도록 패치
+    original_cuda_is_available = torch.cuda.is_available
+    torch.cuda.is_available = lambda: False
+    print("macOS: CUDA 체크 패치 적용")
+
 from chatterbox.tts import ChatterboxTTS
 from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 
-# 모델 로딩
-device = "cuda" if torch.cuda.is_available() else "cpu"
+# 모델 로딩 - macOS MPS 지원 추가
+if torch.cuda.is_available():
+    device = "cuda"
+    print("CUDA 사용 가능: GPU 가속 활성화")
+elif torch.backends.mps.is_available():
+    device = "cpu"  # macOS에서는 일단 CPU로 시작
+    print("MPS 사용 가능하지만 CPU로 시작 (모델 호환성)")
+else:
+    device = "cpu"
+    print("CPU 모드: GPU 가속 없음")
+
 print(f"사용 디바이스: {device}")
 
 # 영어 모델 로딩
@@ -43,7 +67,43 @@ except Exception as e:
 # 다국어 모델 로딩
 print("다국어 모델 로딩 중...")
 try:
-    multilingual_model = ChatterboxMultilingualTTS.from_pretrained(device=device)
+    # macOS에서는 강제로 CPU로 로드
+    if platform.system() == "Darwin":
+        print("macOS: CPU로 강제 로드 시도")
+        # 모델 로딩 시 map_location을 CPU로 강제 설정
+        import torch
+        original_load = torch.load
+        def patched_load(*args, **kwargs):
+            kwargs['map_location'] = torch.device('cpu')
+            return original_load(*args, **kwargs)
+        torch.load = patched_load
+        
+        multilingual_model = ChatterboxMultilingualTTS.from_pretrained(device="cpu")
+        
+        # 원래 함수 복원
+        torch.load = original_load
+        
+        # MPS로 이동 시도 (모델 내부 컴포넌트들을 개별적으로 이동)
+        if torch.backends.mps.is_available():
+            try:
+                print("MPS로 모델 이동 시도...")
+                # 모델 내부의 주요 컴포넌트들을 MPS로 이동
+                if hasattr(multilingual_model, 'model') and hasattr(multilingual_model.model, 'to'):
+                    multilingual_model.model = multilingual_model.model.to("mps")
+                if hasattr(multilingual_model, 'vocoder') and hasattr(multilingual_model.vocoder, 'to'):
+                    multilingual_model.vocoder = multilingual_model.vocoder.to("mps")
+                if hasattr(multilingual_model, 'text_encoder') and hasattr(multilingual_model.text_encoder, 'to'):
+                    multilingual_model.text_encoder = multilingual_model.text_encoder.to("mps")
+                if hasattr(multilingual_model, 'audio_encoder') and hasattr(multilingual_model.audio_encoder, 'to'):
+                    multilingual_model.audio_encoder = multilingual_model.audio_encoder.to("mps")
+                
+                print("✅ MPS로 모델 이동 성공!")
+                device = "mps"
+            except Exception as mps_error:
+                print(f"❌ MPS 이동 실패, CPU 사용: {mps_error}")
+                device = "cpu"
+    else:
+        multilingual_model = ChatterboxMultilingualTTS.from_pretrained(device=device)
     print("다국어 모델 로딩 완료!")
 except Exception as e:
     print(f"다국어 모델 로딩 실패: {e}")
